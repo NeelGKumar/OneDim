@@ -32,44 +32,61 @@ namespace OneDim
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
-            // TODO: start here modifying the behaviour of your command.
-            // ---
-            RhinoApp.WriteLine("The {0} command will add a line right now.", EnglishName);
+            //select the cross-section faces
+            var gb = new Rhino.Input.Custom.GetObject();
+            gb.SetCommandPrompt("Select the surfaces which form the cross-section of the beam.");
+            gb.GeometryFilter = Rhino.DocObjects.ObjectType.Surface;
+            gb.EnablePreSelect(false, true);
+            gb.GetMultiple(1, 0);
+            if (gb.CommandResult() != Rhino.Commands.Result.Success)
+                return gb.CommandResult();
 
-            Point3d pt0;
-            using (GetPoint getPointAction = new GetPoint())
+            List<BrepFace> cross_section = new List<BrepFace>();
+            for (int i = 0; i < gb.ObjectCount; i++)
             {
-                getPointAction.SetCommandPrompt("Please select the start point");
-                if (getPointAction.Get() != GetResult.Point)
-                {
-                    RhinoApp.WriteLine("No start point was selected.");
-                    return getPointAction.CommandResult();
-                }
-                pt0 = getPointAction.Point();
+                var face = gb.Object(i).Face();
+                if (face != null)
+                    cross_section.Add(face);
             }
+            
+            //select the rail
+            Rhino.DocObjects.ObjRef rail_ref;
+            var rc = RhinoGet.GetOneObject("Select rail curve", false, Rhino.DocObjects.ObjectType.Curve, out rail_ref);
+            if (rc != Rhino.Commands.Result.Success)
+                return rc;
 
-            Point3d pt1;
-            using (GetPoint getPointAction = new GetPoint())
+            var rail_crv = rail_ref.Curve();
+            if (rail_crv == null)
+                return Rhino.Commands.Result.Failure;
+
+            var gx = new Rhino.Input.Custom.GetObject();
+            gx.SetCommandPrompt("Select cross section curves");
+            gx.GeometryFilter = Rhino.DocObjects.ObjectType.Curve;
+            gx.EnablePreSelect(false, true);
+            gx.GetMultiple(1, 0);
+            if (gx.CommandResult() != Rhino.Commands.Result.Success)
+                return gx.CommandResult();
+
+            var cross_sections = new List<Rhino.Geometry.Curve>();
+            for (int i = 0; i < gx.ObjectCount; i++)
             {
-                getPointAction.SetCommandPrompt("Please select the end point");
-                getPointAction.SetBasePoint(pt0, true);
-                getPointAction.DynamicDraw +=
-                  (sender, e) => e.Display.DrawLine(pt0, e.CurrentPoint, System.Drawing.Color.DarkRed);
-                if (getPointAction.Get() != GetResult.Point)
-                {
-                    RhinoApp.WriteLine("No end point was selected.");
-                    return getPointAction.CommandResult();
-                }
-                pt1 = getPointAction.Point();
+                var crv = gx.Object(i).Curve();
+                if (crv != null)
+                    cross_sections.Add(crv);
             }
+            if (cross_sections.Count < 1)
+                return Rhino.Commands.Result.Failure;
 
-            doc.Objects.AddLine(pt0, pt1);
+            var sweep = new Rhino.Geometry.SweepOneRail();
+            sweep.AngleToleranceRadians = doc.ModelAngleToleranceRadians;
+            sweep.ClosedSweep = false;
+            sweep.SweepTolerance = doc.ModelAbsoluteTolerance;
+            //sweep.SetToRoadlikeTop();
+            var breps = sweep.PerformSweep(rail_crv, cross_sections);
+            for (int i = 0; i < breps.Length; i++)
+                doc.Objects.AddBrep(breps[i]);
             doc.Views.Redraw();
-            RhinoApp.WriteLine("The {0} command added one line to the document.", EnglishName);
-
-            // ---
-
-            return Result.Success;
+            return Rhino.Commands.Result.Success;
         }
     }
 }
